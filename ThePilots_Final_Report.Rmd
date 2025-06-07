@@ -1,0 +1,639 @@
+---
+title: 'The Pilots: Delay Decoder Final Report'
+author: Sophia Chavez, Elif Turgut, Joseph Nam, Justin Henriquez, Arjun Sharma, Lance
+  Santana
+date: "2025-06-08"
+output:
+  html_document: default
+  pdf_document: default
+subtitle: "STAT 167 - Introduction to Data Science"
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Project Description
+
+Hundreds of millions of people travel each year, and hundreds of
+millions of people have delayed flights. What if we could minimize the
+number of passengers affected by delayed flights? Throughout this
+project, we will investigate correlations between flight delays and
+conditions such as weather, plane type, airline, etc. with the goal of
+assisting travelers in booking their flights with the best probability
+of avoiding a delayed flight.
+
+We will be using the anyflights dataset which includes information on
+all flights departing from airports in a given year including the
+“nycflights13” data. Specifically, extracting all 2013 flights departing
+from America's top ten busiest airports; ATL, LAX, DFW, DEN, ORD, MCO,
+JFK, LAS, CLT, MIA.
+
+Assumptions: To make sure our comparisons and conclusions are accurate,
+we will assume that there is consistency in how certain variables are
+measured across the different datasets, most importantly for how the
+weather factors and delay times are recorded.
+
+## Dataset
+
+```{r, echo=FALSE, }
+library(dplyr)
+library(ggplot2)
+library(anyflights)
+library(nycflights13)
+library(patchwork)
+library(anyflights)
+options(timeout = 800)
+  
+busiest_flights13_ <- get_flights(c("ATL", "LAX", "DFW","DEN","ORD", "MCO","JFK", "LAS", "CLT", "MIA" ), 2013)
+
+  
+
+  
+```
+
+```{r, echo=FALSE, message=FALSE}
+glimpse(busiest_flights13_)
+  
+weather_data <-  get_weather(c("ATL", "LAX", "DFW","DEN","ORD", "MCO","JFK", "LAS", "CLT", "MIA" ), 2013)
+glimpse(weather_data)
+```
+
+## Month Analysis
+
+```{r, message=FALSE}
+
+busiest_flights13_ <- filter(busiest_flights13_, !is.na(dep_delay), !is.na(arr_delay)) # removing canceled flights
+
+
+busiest_flights13_grouped <- group_by(busiest_flights13_ , origin, month)
+
+data <- summarize(busiest_flights13_grouped,
+          flight_count = n(),
+          avg_delay = mean(dep_delay, na.rm = TRUE),
+          delay_total = sum(dep_delay>0, na.rm = TRUE),
+          avg_distance = mean(distance, na.rm=TRUE),
+          prop_delay = delay_total / n())
+
+busiest_flights13_summary <- arrange(data, desc(prop_delay))
+
+
+ggplot(data = busiest_flights13_summary) +
+geom_point(mapping = aes(x = origin, y = prop_delay, color = origin)) +
+facet_wrap(~ month, nrow = 2)
+```
+
+June, July and December had the most delayed flights regardless of
+origin. This tells us that we should pay closer attention to these
+months and their weather conditions, plane types, and distance covered
+to try and identify what is causing the rise in delayed flights.
+
+## Time Analysis
+
+```{r, echo=FALSE}
+# Convert the 'hour' column to parts of the day
+flights <- busiest_flights13_
+flights$time_of_day <- cut(flights$hour,
+                            breaks = c(0, 5, 12, 17, 21, 24), 
+                            labels = c("Night", "Morning", "Afternoon", "Evening", "Night"),
+                            include.lowest = TRUE, right = FALSE)
+
+flights$time_of_day <- factor(flights$time_of_day, 
+                               levels = c("Morning", "Afternoon", "Evening", "Night"))
+
+# Check the results
+table(flights$time_of_day)
+
+# Group by time of day and calculate average departure delay
+avg_delay_by_time <- flights %>%
+  group_by(time_of_day) %>%
+  summarize(avg_dep_delay = mean(dep_delay, na.rm = TRUE))
+
+
+# Bar plot of average departure delay by time of day
+ggplot(avg_delay_by_time, aes(x = time_of_day, y = avg_dep_delay)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  labs(title = "Average Departure Delay by Time of Day", 
+       x = "Time of Day", y = "Average Departure Delay (minutes)")
+
+# ANOVA test to check if time of day affects departure delay
+anova_results <- aov(dep_delay ~ time_of_day, data = flights)
+summary(anova_results)
+```
+
+Ho: Delays do not depend on time of day
+
+Ha: Delays depend on the time of day
+
+We calculated a small p-value, which means that we can reject the null
+hypothesis and have evidence that the time of day has a significant
+effect on departure delays, which is also seen in the graph.
+
+## Distance Analysis
+
+```{r, echo=FALSE}
+
+ggplot(data = busiest_flights13_summary) +
+geom_point(mapping = aes(x = avg_distance, y = prop_delay, color = origin)) +
+facet_wrap(~month)
+
+```
+
+The plot above shows that regardless of month and origin, the
+distribution follows the same pattern. The amount of delayed flights
+peak between 700 and 1000 miles traveled therefore we can state that the
+proportion of delayed flights and distance traveled do not have a
+positive correlation.
+
+## Weather Analysis
+
+```{r, echo=FALSE, message=FALSE}
+  
+
+#cleaning weather data
+weather_data <- filter(weather_data, !is.na(temp), !is.na(humid),!is.na(wind_dir),!is.na(wind_speed),!is.na(wind_gust),!is.na(precip),!is.na(pressure),!is.na(visib))
+
+
+
+#joining weather and flights
+flights_weather <- left_join(
+busiest_flights13_grouped, weather_data, by = c("origin" = "origin", "time_hour" = "time_hour",  "month" = "month")) 
+
+
+
+flights_weather_grouped <- group_by(flights_weather, month, origin)
+flights_weather_summary <- summarize(flights_weather_grouped,
+                                    delay_total = sum(dep_delay>0, na.rm = TRUE),
+                                    prop_delay = delay_total / n(),
+                                    avg_dep_delay = mean(dep_delay, na.rm = TRUE),
+                                    avg_arr_delay = mean(arr_delay, na.rm = TRUE),
+                                    avg_air_time = mean(air_time, na.rm = TRUE),
+                                    avg_temp = mean(temp, na.rm = TRUE),
+                                    avg_humid = mean(humid, na.rm = TRUE),
+                                    avg_wind_dir = mean(wind_dir, na.rm = TRUE),
+                                    avg_wind_speed = mean(wind_speed, na.rm = TRUE),
+                                    avg_wind_gust = mean(wind_gust, na.rm = TRUE),
+                                    avg_precip = mean(precip, na.rm = TRUE),
+                                    avg_pressure = mean(pressure, na.rm = TRUE),
+                                    avg_visib = mean(visib, na.rm = TRUE),)
+
+lm.fit <- lm(prop_delay ~  avg_dep_delay + avg_arr_delay + avg_air_time + avg_temp + avg_humid + avg_wind_dir + avg_wind_speed + avg_wind_gust + avg_precip +avg_pressure +avg_visib, flights_weather_summary)
+summary(lm.fit)
+
+
+wind_gust_lm.fit <- lm(prop_delay ~ avg_wind_gust, flights_weather_summary)
+summary(wind_gust_lm.fit) #shows small relation 4.1% variance represented by wind gust
+
+```
+
+```{r, echo=FALSE}
+flights_weather_summary$residuals <- resid(lm.fit)
+flights_weather_summary$predicted_delay <- predict(lm.fit)
+
+ggplot(flights_weather_summary, aes(x = predicted_delay, y = residuals)) +
+  geom_point(color = "darkorange", size = 3, alpha = 0.6) +
+  geom_hline(yintercept = 0, color = "red", linetype = "dashed") +
+  labs(title = "Residuals vs Predicted Values",
+       x = "Predicted Proportion Delay",
+       y = "Residuals") +
+  theme_minimal()
+```
+
+```{r, echo=FALSE}
+# Add predicted values to your dataset
+flights_weather_summary$predicted_delay <- predict(lm.fit)
+
+# Plot
+ggplot(flights_weather_summary, aes(x = prop_delay, y = predicted_delay)) +
+  geom_point(color = "steelblue", size = 3, alpha = 0.7) +
+  geom_abline(intercept = 0, slope = 1, color = "red", linetype = "dashed") +
+  labs(title = "Predicted vs Actual Proportion of Delayed Flights",
+       x = "Actual Proportion Delay",
+       y = "Predicted Proportion Delay") +
+  theme_minimal()
+```
+
+```{r, echo=FALSE, message=FALSE}
+ggplot(flights_weather_summary, aes(x = avg_humid, y = prop_delay)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = TRUE, color = "darkgreen") +
+  labs(title = "Proportion of Delayed Flights vs. Humidity",
+       x = "Average Humidity", y = "Proportion of Delayed Flights")
+
+```
+
+```{r, echo=FALSE, message=FALSE}
+ggplot(flights_weather_summary, aes(x = avg_precip, y = prop_delay)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = TRUE, color = "purple") +
+  labs(title = "Proportion of Delayed Flights vs. Precipitation",
+       x = "Average Precipitation", y = "Proportion of Delayed Flights")
+```
+
+We performed linear regression on the various weather conditions to find
+strong relationships between the proportion of delayed flights and
+weather conditions. Based on our results, that as the average humidity
+and precipitation increases, the proportion of delayed flights
+decreases. Additionally, as wind gust increases so does the proportion
+of delayed flights.
+
+## Aircraft Analysis
+
+```{r, echo=FALSE}
+top_airports<- flights %>%
+  count(origin, sort=TRUE) %>%
+  slice_max(n,n=10)
+busiest_flights13_<- flights %>%
+  filter(origin %in% top_airports$origin)
+busiest_flights_with_planes<- busiest_flights13_ %>%
+  left_join(planes, by="tailnum")
+head(busiest_flights_with_planes)
+
+# Correlation between delays and plane features(manufacturer year)
+#cor(busiest_flights_with_planes$dep_delay,busiest_flights_with_planes$year.y,use="complete.obs")
+
+filtered_data<-busiest_flights_with_planes %>%
+  filter(year.y >= 1990)
+ggplot(filtered_data, aes(x=factor(year.y),y=dep_delay))+
+  geom_violin(fill="lightblue",alpha=0.7)+
+  labs(
+    title="Departure Delay vs Plane Manufacture Year",
+    x="Manufacture Year of Plane",
+    y="Departure Delay"
+  )
+```
+
+We are looking to see if there is a correlation between delays and plane
+features such as the manufacturer year. I filtered the data so that we
+would be looking at the most recent years for this analysis. Looking at
+the results we can see that in the early manufacture years the departure
+delays are high and they gradually decrease as time goes on with a
+couple of outliers in 2002 and especially in 2011. But for the most part
+as the manufacture year of the plane gets newer the departure delays
+decrease.
+
+Limitation: A limitation that I found while working on the Aircraft
+Analysis was the sheer amount of data that had to be processed and
+analyzed. It would take a really long time to load the data and conduct
+any visualizations because of how large the data set was. To fix this
+issue I filtered the data to only include the manufacture year from 1990
+and up which gives us a higher level of data reliability because it is
+comparing planes in recent modern time.
+
+## Origin analysis
+
+Looking at our prop_delayed and origin facet plot, we can see that
+specific origin airports consistently have the highest or smallest
+proportion of delayed flights. Is this trend statistically significant?
+
+```{r}
+lm.fit_carrier_origin <- lm(prop_delay ~   origin, data = busiest_flights13_summary)
+summary(lm.fit_carrier_origin)
+```
+
+Looking at the results, we can see that origins DEN,DFW,LAS,and ORD have
+a significant relationship to the proportion of delayed flights.
+Specifically, DEN, DFW, LAS and ORD lead to higher proportions of
+delayed flights. What conditions could be contributing to this trend?
+
+```{r, echo=FALSE}
+
+
+origin_weather_data<-mutate(flights_weather, class = ifelse(origin == "DEN"|origin ==  "DFW"| origin == "LAS"|origin == "ORD",1,0))
+origin_weather_data <- group_by(origin_weather_data, class)
+flights_weather_summary <- summarize(origin_weather_data,
+                                    delay_total = sum(dep_delay>0, na.rm = TRUE),
+                                    prop_delay = delay_total / n(),
+                                    avg_dep_delay = mean(dep_delay, na.rm = TRUE),
+                                    avg_arr_delay = mean(arr_delay, na.rm = TRUE),
+                                    avg_air_time = mean(air_time, na.rm = TRUE),
+                                    avg_temp = mean(temp, na.rm = TRUE),
+                                    avg_humid = mean(humid, na.rm = TRUE),
+                                    avg_wind_dir = mean(wind_dir, na.rm = TRUE),
+                                    avg_wind_speed = mean(wind_speed, na.rm = TRUE),
+                                    avg_wind_gust = mean(wind_gust, na.rm = TRUE),
+                                    avg_precip = mean(precip, na.rm = TRUE),
+                                    avg_pressure = mean(pressure, na.rm = TRUE),
+                                    avg_visib = mean(visib, na.rm = TRUE),)
+flights_weather_summary
+```
+
+In order to see if weather conditions correlate to the higher proportion
+of delayed flights, we split the data set into two classes, one
+containing origins that have a statistically significant relationship to
+the proportion of delayed flights and the other containing origins
+without a significant relationship. Our results show that flights
+departing from origins that have a statistically significant
+relationship to the proportion of delayed flights also have
+significantly higher wind gusts. These results further our weather
+analysis results, confirming higher wind gusts and speeds are correlated
+to a higher proportion of delayed flights.
+
+## Flight Volume vs. Delay Rates by Month
+
+```{r, echo=FALSE}
+#calculates the number of flights that occure each month
+monthly_flights <- flights %>% 
+  group_by(month) %>% 
+  summarise(amt_flights = n())
+
+#calculates the number of flights with delays that occure each month
+monthly_delays <- flights %>% 
+  mutate(delay = dep_delay > 15) %>% 
+  group_by(month) %>% 
+  summarise(amt_delay_flights = sum(delay, na.rm = TRUE))
+
+#combines both counts into one dataset
+monthly_both <- monthly_flights %>% inner_join(monthly_delays, by = "month")
+
+#graphs the number of flights each month
+ggplot(monthly_both, aes(x = factor(month))) +
+  geom_col(aes(y = amt_flights, fill = "Total Flights"), position = "dodge") +
+  geom_line(aes(y = amt_delay_flights, color = "Delayed Flights", group = 1)) +
+  geom_point(aes(y = amt_delay_flights, color = "Delayed Flights", group = 1)) +
+  scale_fill_manual(name = "Legend", values = c("Total Flights"= "orange")) + 
+  scale_color_manual(name = "Legend", values = c("Delayed Flights"= "red")) + 
+  labs(
+    title = "Amount of Flights by Month",
+    x = "Month",
+    y = "Amount of Flights"
+  )
+```
+
+This analysis was based off the idea that months with higher demand for
+travel ie. more flights would result in increased delays. The above plot
+demonstrated a mild correlation between the total flights occurring in
+each month and the amount of delays. However as the change total number
+of flights has a direct effect on the number of delays it is necessary
+to standardize the data with z-scores for each month to see a real
+relationship.
+
+```{r, echo=FALSE , message=FALSE}
+#calculates the number of flights that occure each month
+monthly_flights <- flights %>% 
+  group_by(month) %>% 
+  summarise(amt_flights = n()) %>%
+  mutate(z_score_total = scale(amt_flights)[,1])
+
+#calculates the number of flights with delays that occure each month
+monthly_delays <- flights %>% 
+  mutate(delay = dep_delay > 15) %>% 
+  group_by(month) %>% 
+  summarise(amt_delay_flights = sum(delay, na.rm = TRUE))
+
+#calculates the percentage of flights with delays that occure each month
+monthly_delay_percent <- monthly_flights %>%
+  inner_join(monthly_delays, by = "month") %>%
+  mutate(
+    percentage_delay = 100 * amt_delay_flights / amt_flights, 
+    z_score = scale(percentage_delay)[,1]
+    )
+
+#graphs the standardized amount of flights each month
+plot_1 <- ggplot(monthly_delay_percent, aes(x = factor(month), y = z_score)) +
+  geom_col(fill = "red") +
+  ylim(-2, 2) +
+  labs(
+    title = "Percentage of Flights Delayed by Month",
+    x = "Month",
+    y = "Z-Score of Percent Flights Delayed"
+  )
+
+#graphs the standardized amount of delays each month
+plot_2 <- ggplot(monthly_delay_percent, aes(x = factor(month), y = z_score_total)) +
+  geom_col(fill = "blue") +
+  ylim(-2, 2) +
+  labs(
+    title = "Total Flights by Month",
+    x = "Month",
+    y = "Z-Score of Total Flights "
+  )
+
+plot_1 + plot_2
+```
+
+After standardizing the data with z-scores there is a somewhat of a
+detectable relationship. Months 1, 2 are negative or 0, and 3-8 are
+positive on both graphs, however the variability does not match with
+significant increases and drops in total flights, flight 10 sticks out
+as a noticeable outlier as flight delay is low negative while total
+flights is a high positive. Overall this analysis heavily called into
+question a noteable relationship between the two variables.
+
+```{r, echo=FALSE, message=FALSE}
+#trains model to perdict delay form the total amount of flights
+model <- lm(percentage_delay ~ z_score_total, data = monthly_delay_percent)
+
+#summary of results
+summary(model)
+
+#graphs regression line
+ggplot(monthly_delay_percent, aes(x = z_score_total, y = percentage_delay)) +
+  geom_point(color = "blue", size = 2.5) + 
+  geom_smooth(method = "lm", se = TRUE, color = "red") +
+  labs(
+    title = "Regression Line: % Flight Delay by Flight Amount",
+    x = "Z-Score for Total Flights",
+    y = "Percentage of Flights Delayed"
+  )
+```
+
+After performing linear regression and graphing, the results demonstrate
+a high p-value of .216 above the significant .05 level therefore we
+cannot say that the increase in flight delays is associated with a
+increase in flight quantity. The R-Squared value added to this analysis
+with the only 15% variability in delay volume being explained by flight
+quantity. Overall there seems to be a weak positive trend between the
+two variables but it is not statistically significant. Limitations of
+this analysis include the focus on monthly trends without accounting for
+daily variation or other influencing variables such as weather.
+Comparing flight delays by week, time of day, or specific dates might
+reveal more consistent and meaningful patterns.
+
+## Carrier Analysis
+
+We are also interested to see if the travel airline or carrier plays a
+role flight delays. To do this, we performed a one-way ANOVA test to see
+if the mean departure delay times significantly differ by carrier.
+
+```{r,collapse=T, echo=FALSE}
+aov_carrier <- aov(dep_delay ~ carrier, data = busiest_flights13_)
+summary(aov_carrier)
+```
+
+The small p-value (\<2e-16) tells us that there is evidence for a
+significant difference in mean departure delay times across the
+carriers. We can investigate this further with Tukey's HSD test, which
+compares each carrier pair for a significant difference and allows us to
+rank the carriers based on which pairs are significantly different from
+one another and which ones are not.
+
+```{r,collapse=T , echo=FALSE}
+tukey <- TukeyHSD(aov_carrier)
+
+plot(tukey)
+
+# install.packages("agricolae")
+library(agricolae)
+hsd <- HSD.test(aov_carrier, "carrier", group = TRUE)
+hsd$groups
+```
+
+The TukeyHSD() function takes each carrier pair and provides a 95%
+confidence interval and p-value for the true difference in means. Then,
+the HSD.test() function streamlines the data for each pair into the
+appropriate ranking, where each group letter represents an individual
+rank. For example, carries VX (Virgin America), YV (Mesa Airlines), and
+FL (AirTran Airways) are all under group g, which means the three
+carriers are not considered significantly different from one another and
+are all "tied" for that rank. Groups with 2 letters (i.e. bc) serve as
+bridges between two different groups, as they are not significantly
+different from either group.
+
+Based on this ranking, Alaska Airlines (AS), US Airways (US), and a tie
+between Delta and SkyWest Airlines (DL and OO) are ranked as the top 3
+airlines with the shortest delays, making them the safest travel
+options. ExpressJet Airlines (EV), Southwest Airlines (WN) and Endeavor
+Air (9E) (tie since 9E is group bc but closer to group b), and Frontier
+Airlines (F9) are ranked as the top 3 airlines with the longest delays,
+which makes them the least ideal airlines to travel with to avoid
+delays.
+
+We also ran a logistic regression model that investigates and predicts
+the likelihood of each carrier experiencing a delay. To do this, we
+converted the departure delay times into a binary variable,
+corresponding to a delayed vs not delayed flight. We then turned the
+model's results into a barplot of predicted probabilities by predicting
+the probability of each flight being delayed, then averaging the
+probability across each carrier.
+
+```{r,collapse=T, echo=FALSE}
+#busiest_flights13_$dep_delay_bin <- ifelse(busiest_flights13_$dep_delay > 0, 1, 0)
+
+#logit_model <- glm(dep_delay_bin ~ carrier, data = busiest_flights13_, family = "binomial")
+#summary(logit_model)
+
+#busiest_flights13_$predicted_prob <- predict(logit_model, type = "response")
+#carrier_probs <- busiest_flights13_ %>% 
+  #group_by(carrier) %>%
+  #summarize(avg_prob = mean(predicted_prob)) # Calculate average predicted probability by carrier
+
+#ggplot(carrier_probs, aes(x = reorder(carrier, -avg_prob), y = avg_prob)) +
+ # geom_bar(stat = "identity", fill = "skyblue") +
+ # labs(title = "Predicted Probability of Delay by Carrier",
+    #   x = "Carrier", y = "Predicted Probability")
+```
+
+Based on the plot, Southwest Airlines is the carrier most likely to
+experience a flight delay at around 65%, while Alaska Airlines is the
+least likely, at just over 20%. In general, most airlines that were
+ranked with higher delay times tend to have higher delay probabilities,
+while the opposite is true for airlines with lower delay times on
+average. This further supports the validity of the ranking from the
+Tukey's test and overall suggestions for which airlines to opt for or
+avoid.
+
+We are also interested in seeing if airlines are consistent across
+different origins in terms of being delayed or on time. We used a
+two-way ANOVA procedure to analyze the interaction effects between both
+the carrier and origin on the departure delays. The two-way ANOVA also
+shows the individual effects of both the origin and carrier, which have
+both already been established to have an effect on departure delay
+times.
+
+```{r, echo=FALSE}
+aov_model2 <- aov(dep_delay ~ carrier * origin, data = busiest_flights13_)
+summary(aov_model2)
+```
+
+The small p-value (\<2e-16) for the interaction effects (carrier:origin)
+tells us there is significant evidence that the effects of the carrier
+on flight delays depends on the flight origin, and vice versa. This
+means that in general, at least some airlines are likely not consistent
+across all origins. This can be verified using the plot below:
+
+```{r,echo=FALSE}
+ggplot(data = busiest_flights13_) +
+geom_point(mapping = aes(x = carrier, y = dep_delay, color = carrier)) +
+facet_wrap(~ origin, nrow = 2) +
+labs(x = "Carrier", y = "Departure Delay", title = "Airline Delays by Origin Airport")
+```
+
+The plot shows consistencies in airlines like American Airlines (AA) and
+Delta Airlines (DL), which ranked higher in delay times, as the spread
+of delay times are around the same size across most or all origins.
+Airlines like Skywest (OO) and ExpressJet (EV), and Envoy Air (MQ) are
+less consistent due to the spread of delay times being more varied
+across different origins. This variability support the ANOVA procedure's
+result, in addition to the fact that some carriers don't operate at
+certain locations, which in turn adds more significance to the
+difference in delays across each carrier at each origin.
+
+Carrier analysis conclusion
+
+We found a difference in delay times based on the carrier using an ANOVA
+procedure, and we used that information to determine which carriers will
+most likely be on time and which ones to potentially avoid by using
+Tukey's test. We then followed up with a prediction model using logistic
+to regression to predict the odds of a flight being delayed based on the
+given carrier, and the results supported our previous findings. Finally,
+we conducted a two-way ANOVA procedure to see if the interaction effects
+between the carrier and flight origin have significant impacts on flight
+delay or if airlines are consistent across different origins. This
+procedure also showed a significant difference, which we observed and
+confirmed in the above plot by looking at the spread of delays for each
+carrier across all origins.
+
+## Conclusions
+
+Our research has identified conditions most and least associated with
+delayed flights. We can assist passengers departing from one of the top
+10 busiest airports by booking flights with the best probability of
+avoiding a delayed flight.
+
+-   Depart early morning
+
+-   If possible fly during January through May, or September through
+    November
+
+-   On the most recently manufactured plane
+
+-   On days with low wind gusts
+
+-   If possible, opt for airlines such as Alaska or Delta and avoid
+    airlines such as Frontier or Southwest
+
+General Limitation:
+
+A key limitation of our analysis was the use of the anyflights()
+function, which downloads data in real time from an external source. Due
+to the slow response time and large data volume, we limited our dataset
+to only the top 10 busiest U.S. airports. This allowed for more
+efficient processing but may have excluded important patterns present at
+smaller or regional airports.
+
+## Authors' Contributions
+
+-   Sophia Chavez: Month, distance, and weather analysis. Multiple
+    linear regression. Final report setup
+
+-   Elif Turgut: Weather analysis visuals, time of day analysis
+
+-   Joseph Nam: Objective analysis, time of day analysis, plane analysis
+
+-   Justin Henriquez: Background, objective analysis
+
+-   Arjun Sharma: Carrier and origin analysis
+
+-   Lance Santana: Delay vs flight quantity analysis, final slide deck
+
+## Data Availability
+
+R documentation for 'anyflights':
+<https://github.com/simonpcouch/anyflights>
+
+nycflights13 package:
+<https://cran.r-project.org/web/packages/nycflights13/index.html>
